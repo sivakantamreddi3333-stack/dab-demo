@@ -1,0 +1,56 @@
+name: Deploy DAB (dab_demo)
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+
+permissions:
+  contents: read
+
+# Serialize deployments per branch so two rapid pushes don't race each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    runs-on: ubuntu-latest
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+    defaults:
+      run:
+        # The bundle (databricks.yml) lives in the dab_demo subdirectory.
+        working-directory: dab_demo
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up uv (needed to build the wheel artifact)
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@main
+
+      - name: Determine bundle target
+        id: target
+        run: |
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+            echo "target=prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "target=dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate bundle
+        run: databricks bundle validate --strict --target ${{ steps.target.outputs.target }}
+
+      - name: Deploy bundle
+        run: databricks bundle deploy --target ${{ steps.target.outputs.target }} --auto-approve
